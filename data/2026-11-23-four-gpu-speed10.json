@@ -1,0 +1,257 @@
+{
+  "published_date": "2026-11-24",
+  "benchmark_date": "2026-11-23",
+  "scope": "Four-GPU (TP=4, PP=1 + single-NUMA CPU Engram offload) production deployment and optimization evaluation (Speed10) of DeepSeek-V4.1-Flash-1017 official original weights on four RTX PRO 6000 Blackwell Server Edition 96 GB GPUs.",
+  "hardware": {
+    "gpus": "4 x NVIDIA RTX PRO 6000 Blackwell Server Edition 96 GB (PCIe 5.0 x16, single NUMA node 0)",
+    "cpu_affinity": "Single-socket NUMA 0 CPU pinning (--cpuset-cpus=0-47,96-143; --numa-bind-nodes 0 0 0 0)",
+    "host_memory_cgroup_limit_gib": 238,
+    "cpu_engram_gib_approx": 189.0,
+    "swap_policy": "systemd_scope_zero (memory.swap.max=0, memory.swap.current=0)"
+  },
+  "model": {
+    "repo": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "revision": "official-release",
+    "note": "Official original DeepSeek-V4.1-Flash-1017 weights. Refusal rates were not evaluated."
+  },
+  "runtime_identity": {
+    "profile_name": "cand2_pipe0_sp_mxfp8_kv11g_seq16",
+    "image_content_id": "sha256:ed4f73cce8c8718879b3bd06fc95221721942b212f0eb8cb2388cb2696a689aa",
+    "inference_fingerprint": "ac65e9d19cc5e5d7f09df12e3bd2a61d4a602d9e106ce7ebdc6d06c6d55f6e7c",
+    "kv_cache_gib_per_gpu": 11.0,
+    "kv_cache_bytes_per_gpu": 11811160064,
+    "startup_kv_tokens": 5238588,
+    "startup_nominal_1m_x": 5.0,
+    "max_model_len": 1048576,
+    "max_num_seqs": 16
+  },
+  "stage2_ab_screening": {
+    "protocol": "Isolated 4-GPU A/B screening on identical hardware, checkpoint and short/prefill suite. T=0 decode reports median tok/s (C1 single-stream; C4/C8 batch aggregate); cold prefill uses unique salted prompts with 0 prefix hits.",
+    "candidates": {
+      "cand1_base_pipe2nccl": {
+        "key_change": "PREFILL_PIPE=2, ORDER=comm2prio, KV=9.5 GiB/GPU",
+        "c1_geo_tps": 303.75,
+        "c4_geo_tps": 524.11,
+        "c8_geo_tps": 814.62,
+        "prefill_163k_s": 15.18,
+        "prefill_1m_s": 85.95,
+        "peak_vram_mib": 97051,
+        "decision": "baseline_reference",
+        "reason": "Single-process PP=1 dual-thread PREFILL_PIPE=2 suffered CPython 3.12 GIL contention (~18,044 CUDA launches/step, 774 ms wall vs 228 ms GPU) and used ~2.54 GiB/GPU extra buffers."
+      },
+      "cand2_pipe0_sp_mxfp8": {
+        "key_change": "PREFILL_PIPE=0, PREFILL_SP=1, SP_RS=nccl, SP_GATHER=mxfp8, BMM_MAX_T=48 (screened at KV=8.2 GiB/GPU before expanding to 11.0 GiB/GPU)",
+        "c1_geo_tps": 307.62,
+        "c4_geo_tps": 526.82,
+        "c8_geo_tps": 825.08,
+        "c1_t0_tps": {"chinese": 311.57, "code": 343.85, "english": 271.72},
+        "c1_t1_tps": {"chinese": 297.15, "code": 366.52, "english": 262.20},
+        "c4_t0_agg_tps": {"chinese": 521.53, "code": 589.84, "english": 475.30},
+        "c8_t0_agg_tps": {"chinese": 820.11, "code": 881.33, "english": 777.09},
+        "prefill_163k_s": 9.17,
+        "prefill_1m_s": 61.97,
+        "peak_vram_mib": 93913,
+        "decision": "promoted",
+        "reason": "Cut 163K/1M cold TTFT by 39.6% / 27.9%, improved C1/C4/C8 decode, and freed ~2.54 GiB/GPU allowing KV expansion to 11.0 GiB/GPU."
+      },
+      "cand3_pipe2_sharedtail_replay": {
+        "key_change": "PREFILL_PIPE=2 + SHARED_TAIL=1 + REPLAY_GRAPHS=1",
+        "c1_geo_tps": 303.24,
+        "c4_geo_tps": 503.62,
+        "c8_geo_tps": 812.17,
+        "prefill_163k_s": 15.17,
+        "prefill_1m_s": 85.42,
+        "peak_vram_mib": 96453,
+        "decision": "rejected",
+        "reason": "Still GIL-bound during sequence-parallel prefill and regressed C4 throughput."
+      },
+      "cand4_sp_rs_p2p": {
+        "key_change": "SP_RS=p2p + PIPE_P2P_PREWARM=1",
+        "c1_geo_tps": 306.50,
+        "c4_geo_tps": 530.77,
+        "c8_geo_tps": 824.46,
+        "prefill_163k_s": 14.11,
+        "prefill_1m_s": 89.51,
+        "peak_vram_mib": 96269,
+        "decision": "rejected",
+        "reason": "Regressed 1M cold prefill to 89.51 s; kept SP_RS=nccl."
+      },
+      "cand5_drafter_lmhead8": {
+        "key_change": "DRAFTER_LM_HEAD_MXFP8=1",
+        "c1_geo_tps": 302.03,
+        "c4_geo_tps": 525.72,
+        "c8_geo_tps": 816.04,
+        "prefill_163k_s": 14.18,
+        "prefill_1m_s": 84.09,
+        "peak_vram_mib": 96143,
+        "decision": "rejected",
+        "reason": "Slowed C1 decode (-0.56% vs baseline) and added ~0.33 GiB/GPU VRAM overhead."
+      }
+    }
+  },
+  "stage3_qualified_production_kv11g": {
+    "short_prompt_t0": {
+      "protocol": "Temperature 0, thinking disabled, 1,024-token output budget on final 11.0 GiB/GPU KV build.",
+      "c1_median_tps": {"chinese": 311.07, "code": 344.20, "english": 270.51},
+      "c4_agg_tps": {"chinese": 519.83, "code": 584.61, "english": 462.54},
+      "c4_per_stream_median_tps": {"chinese": 141.04, "code": 157.91, "english": 123.69},
+      "c8_agg_tps": {"chinese": 821.43, "code": 863.64, "english": 749.96},
+      "c8_per_stream_median_tps": {"chinese": 110.70, "code": 115.56, "english": 99.55}
+    },
+    "short_prompt_t1_c1": {
+      "protocol": "Default production sampling (temperature=1.0, top_p=1.0), 1,024-token output budget.",
+      "c1_median_tps": {"chinese": 291.67, "code": 373.51, "english": 263.33},
+      "stage2_repeat_c1_tps": {"chinese": 297.15, "code": 366.52, "english": 262.20}
+    },
+    "cold_prefill_single": {
+      "protocol": "Unique salted prompts, zero prefix-cache hits, random fact retrieval required.",
+      "tokens_163k": {"median_ttft_s": 9.17, "min_ttft_s": 9.17, "max_ttft_s": 9.53, "passed": true},
+      "tokens_1m": {"median_ttft_s": 62.01, "min_ttft_s": 61.96, "max_ttft_s": 62.06, "passed": true}
+    },
+    "concurrency_and_capacity": {
+      "single_1x1m": {
+        "passed": true,
+        "sessions": 1,
+        "target_tokens": 1000000,
+        "hold_duration_s": 61.03,
+        "steady_decode_tps": 454.11,
+        "cold_ttft_s": 62.31,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "max_kv_cache_usage_perc": 19.27,
+        "retrievals_passed": 1
+      },
+      "concurrent_4x1m": {
+        "passed": true,
+        "sessions": 4,
+        "target_tokens": 1000000,
+        "hold_duration_s": 60.81,
+        "aggregate_decode_tps": 320.83,
+        "per_stream_min_tps": 74.58,
+        "per_stream_max_tps": 83.36,
+        "ttft_min_s": 214.31,
+        "ttft_median_s": 228.30,
+        "ttft_max_s": 232.11,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "max_waiting_during_prefill": 0,
+        "max_kv_cache_usage_perc": 63.00,
+        "retrievals_passed": 4
+      },
+      "concurrent_5x1m": {
+        "passed": true,
+        "sessions": 5,
+        "target_tokens": 1000000,
+        "hold_duration_s": 61.01,
+        "aggregate_decode_tps": 410.32,
+        "per_stream_min_tps": 76.41,
+        "per_stream_max_tps": 95.44,
+        "ttft_min_s": 214.46,
+        "ttft_median_s": 232.79,
+        "ttft_max_s": 331.13,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "max_waiting_during_prefill": 1,
+        "max_kv_cache_usage_perc": 77.48,
+        "retrievals_passed": 5
+      },
+      "concurrent_6x1m": {
+        "passed": true,
+        "sessions": 6,
+        "target_tokens": 1000000,
+        "hold_duration_s": 60.00,
+        "aggregate_decode_tps": 439.16,
+        "per_stream_min_tps": 64.84,
+        "per_stream_max_tps": 88.08,
+        "ttft_min_s": 214.47,
+        "ttft_median_s": 235.61,
+        "ttft_max_s": 355.57,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "max_waiting_during_prefill": 2,
+        "max_kv_cache_usage_perc": 92.89,
+        "retrievals_passed": 6
+      },
+      "concurrent_10x500k": {
+        "passed": true,
+        "sessions": 10,
+        "target_tokens": 500000,
+        "hold_duration_s": 45.96,
+        "aggregate_decode_tps": 637.42,
+        "per_stream_min_tps": 59.11,
+        "per_stream_max_tps": 68.17,
+        "ttft_min_s": 99.47,
+        "ttft_median_s": 210.09,
+        "ttft_max_s": 273.60,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "max_waiting_during_prefill": 6,
+        "max_kv_cache_usage_perc": 78.21,
+        "retrievals_passed": 10
+      },
+      "overflow_8x1m_zero_oom": {
+        "passed": true,
+        "sessions": 8,
+        "target_tokens": 1000000,
+        "completed_ok": 8,
+        "retrievals_passed": 8,
+        "cold_prefix_hits": 0,
+        "preemptions": 0,
+        "allocator_or_oom_warnings": 0,
+        "max_running_observed": 7,
+        "max_waiting_observed": 4,
+        "max_kv_cache_usage_perc": 67.34,
+        "ttft_min_s": 214.56,
+        "ttft_median_s": 339.91,
+        "ttft_max_s": 458.04
+      },
+      "mixed_c4x128k_plus_1m": {
+        "passed": true,
+        "baseline_window_agg_tps": 525.13,
+        "competing_prefill_agg_tps": 61.93,
+        "new_1m_ttft_s": 105.85,
+        "recovery_window_agg_tps": 603.33
+      }
+    },
+    "qualification": {
+      "gsm8k_200_1024_budget": {"passed": 197, "total": 200, "truncated": 0, "failed_ids": [380, 515, 1019]},
+      "quality_chat": {"passed": 29, "total": 30},
+      "quality_low": {"passed": 30, "total": 30},
+      "quality_batch_chat_c10": {"passed": 28, "total": 30},
+      "quality_batch_low_c10": {"passed": 30, "total": 30},
+      "production_quality_t1": {
+        "initial_strict_exact": 81,
+        "initial_equation_format_rhs_correct": 3,
+        "total": 90,
+        "repeat_strict_exact_scores": [79, 82, 81],
+        "four_block_mean_strict_exact": 80.75,
+        "note": "Matches historical T=1.0 sampling variance (79-84/90); initial 81/90 preserved verbatim without overwriting."
+      },
+      "long_quality": {"passed": 12, "total": 12},
+      "application_checks": {"passed": 10, "total": 10},
+      "short_vision": {"passed": 2, "total": 2},
+      "long_vision": {"passed": 4, "total": 4, "prompt_tokens": 19037},
+      "public_https_acceptance": {"passed": 10, "total": 10},
+      "public_cold_cancel": {"passed": 3, "total": 3},
+      "post_promotion_three_protocol_check": {"chat_completions": true, "messages_literal_tokens": true, "responses_tool_call": true}
+    },
+    "hardware_telemetry": {
+      "samples_at_0_5s": 8253,
+      "peak_vram_mib": 96681,
+      "total_vram_mib_per_gpu": 97887,
+      "free_vram_headroom_mib": 1206,
+      "max_power_4gpu_w": 1523.59,
+      "max_temp_c": 72,
+      "swap_current_bytes": 0,
+      "swap_max_bytes": 0,
+      "container_restarts": 0,
+      "allocator_retries": 0
+    },
+    "post_promotion_live_check": {
+      "c1_t0_median_tps": {"chinese": 309.93, "code": 340.08, "english": 264.74},
+      "c4_t0_agg_tps": {"chinese": 504.59, "code": 564.11, "english": 461.37},
+      "prefill_163k_median_s": 9.35,
+      "prefill_1m_median_s": 62.53
+    }
+  }
+}
